@@ -58,6 +58,9 @@ const Index = () => {
   const [penPoints, setPenPoints] = useState<{ x: number; y: number }[]>([]);
   const [isDrawingPen, setIsDrawingPen] = useState(false);
   const [userTemplates, setUserTemplates] = useState<Template[]>([]);
+  const [currentColor, setCurrentColor] = useState('#8B5CF6');
+  const [showGrid, setShowGrid] = useState(true);
+  const [resizing, setResizing] = useState<{ id: string; corner: string; startX: number; startY: number; startWidth: number; startHeight: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const addToHistory = (newObjects: CanvasObject[]) => {
@@ -116,7 +119,7 @@ const Index = () => {
       width: tool === 'rectangle' || tool === 'sticky' || tool === 'diamond' ? 150 : tool === 'triangle' ? 120 : 100,
       height: tool === 'rectangle' || tool === 'sticky' || tool === 'diamond' || tool === 'triangle' ? 100 : 100,
       text: tool === 'text' || tool === 'sticky' ? 'Double click to edit' : '',
-      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      color: currentColor,
     };
 
     const newObjects = [...objects, newObject];
@@ -125,7 +128,7 @@ const Index = () => {
     setTool('select');
   };
 
-  const handleObjectMouseDown = (e: React.MouseEvent, objId: string) => {
+  const handleObjectMouseDown = (e: React.MouseEvent, objId: string, corner?: string) => {
     if (tool !== 'select') return;
     e.stopPropagation();
     
@@ -136,8 +139,23 @@ const Index = () => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const offsetX = (e.clientX - rect.left - pan.x) / (zoom / 100) - obj.x;
-    const offsetY = (e.clientY - rect.top - pan.y) / (zoom / 100) - obj.y;
+    const mouseX = (e.clientX - rect.left - pan.x) / (zoom / 100);
+    const mouseY = (e.clientY - rect.top - pan.y) / (zoom / 100);
+
+    if (corner) {
+      setResizing({ 
+        id: objId, 
+        corner, 
+        startX: mouseX, 
+        startY: mouseY, 
+        startWidth: obj.width || 100, 
+        startHeight: obj.height || 100 
+      });
+      return;
+    }
+
+    const offsetX = mouseX - obj.x;
+    const offsetY = mouseY - obj.y;
     
     setDragging({ id: objId, offsetX, offsetY });
   };
@@ -151,12 +169,43 @@ const Index = () => {
       return;
     }
 
-    if (dragging) {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mouseX = (e.clientX - rect.left - pan.x) / (zoom / 100);
+    const mouseY = (e.clientY - rect.top - pan.y) / (zoom / 100);
 
-      const x = (e.clientX - rect.left - pan.x) / (zoom / 100) - dragging.offsetX;
-      const y = (e.clientY - rect.top - pan.y) / (zoom / 100) - dragging.offsetY;
+    if (resizing) {
+      const obj = objects.find(o => o.id === resizing.id);
+      if (!obj) return;
+
+      const deltaX = mouseX - resizing.startX;
+      const deltaY = mouseY - resizing.startY;
+
+      let newWidth = resizing.startWidth;
+      let newHeight = resizing.startHeight;
+      let newX = obj.x;
+      let newY = obj.y;
+
+      if (resizing.corner.includes('e')) newWidth = resizing.startWidth + deltaX;
+      if (resizing.corner.includes('w')) {
+        newWidth = resizing.startWidth - deltaX;
+        newX = obj.x + deltaX;
+      }
+      if (resizing.corner.includes('s')) newHeight = resizing.startHeight + deltaY;
+      if (resizing.corner.includes('n')) {
+        newHeight = resizing.startHeight - deltaY;
+        newY = obj.y + deltaY;
+      }
+
+      setObjects(objects.map(o => 
+        o.id === resizing.id ? { ...o, x: newX, y: newY, width: Math.max(30, newWidth), height: Math.max(30, newHeight) } : o
+      ));
+      return;
+    }
+
+    if (dragging) {
+      const x = mouseX - dragging.offsetX;
+      const y = mouseY - dragging.offsetY;
 
       setObjects(objects.map(obj => 
         obj.id === dragging.id ? { ...obj, x, y } : obj
@@ -164,11 +213,7 @@ const Index = () => {
     }
 
     if (isDrawingPen) {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const x = (e.clientX - rect.left - pan.x) / (zoom / 100);
-      const y = (e.clientY - rect.top - pan.y) / (zoom / 100);
-      setPenPoints([...penPoints, { x, y }]);
+      setPenPoints([...penPoints, { x: mouseX, y: mouseY }]);
     }
   };
 
@@ -176,6 +221,10 @@ const Index = () => {
     if (dragging) {
       addToHistory(objects);
       setDragging(null);
+    }
+    if (resizing) {
+      addToHistory(objects);
+      setResizing(null);
     }
     setIsPanning(false);
 
@@ -192,7 +241,7 @@ const Index = () => {
         y: drawingLine.y,
         x2,
         y2,
-        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        color: currentColor,
       };
 
       const newObjects = [...objects, newObject];
@@ -209,7 +258,7 @@ const Index = () => {
         x: Math.min(...penPoints.map(p => p.x)),
         y: Math.min(...penPoints.map(p => p.y)),
         points: penPoints,
-        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        color: currentColor,
       };
       const newObjects = [...objects, newObject];
       setObjects(newObjects);
@@ -493,6 +542,41 @@ const Index = () => {
             </Tooltip>
           </div>
 
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Color:</span>
+            <input 
+              type="color" 
+              value={currentColor} 
+              onChange={(e) => setCurrentColor(e.target.value)}
+              className="w-10 h-10 rounded cursor-pointer border-2 border-gray-200"
+            />
+          </div>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Icon name="Settings" size={16} />
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Canvas Settings</SheetTitle>
+              </SheetHeader>
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Show Grid</span>
+                  <Button 
+                    variant={showGrid ? 'default' : 'outline'} 
+                    size="sm"
+                    onClick={() => setShowGrid(!showGrid)}
+                  >
+                    {showGrid ? 'On' : 'Off'}
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
           <Avatar className="cursor-pointer">
             <AvatarFallback className="bg-primary text-white">YP</AvatarFallback>
           </Avatar>
@@ -719,6 +803,8 @@ const Index = () => {
                     <p><strong>Double-click</strong> text or sticky note to edit</p>
                     <p><strong>Click</strong> object to select it</p>
                     <p><strong>Drag</strong> selected object to move</p>
+                    <p><strong>Resize:</strong> Drag corner handles on selected object</p>
+                    <p><strong>Color:</strong> Choose color in header before creating objects</p>
                     <p><strong>Hover</strong> selected object to see delete button</p>
                   </div>
                 </div>
@@ -740,11 +826,12 @@ const Index = () => {
             ref={canvasRef}
             className="absolute inset-0 cursor-crosshair"
             style={{
-              backgroundImage: `
+              backgroundImage: showGrid ? `
                 linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px)
-              `,
+              ` : 'none',
               backgroundSize: '20px 20px',
+              backgroundColor: '#F8F9FA',
               cursor: isPanning ? 'grabbing' : tool === 'select' ? 'default' : 'crosshair',
             }}
             onMouseDown={handleCanvasMouseDown}
@@ -761,58 +848,60 @@ const Index = () => {
               {objects.map((obj) => {
                 if (obj.type === 'line' || obj.type === 'arrow') {
                   return (
-                    <svg
-                      key={obj.id}
-                      className="absolute pointer-events-none"
-                      style={{
-                        left: 0,
-                        top: 0,
-                        width: '100%',
-                        height: '100%',
-                        overflow: 'visible',
-                      }}
-                    >
-                      <defs>
-                        <marker
-                          id={`arrowhead-${obj.id}`}
-                          markerWidth="10"
-                          markerHeight="10"
-                          refX="9"
-                          refY="3"
-                          orient="auto"
-                        >
-                          <polygon points="0 0, 10 3, 0 6" fill={obj.color} />
-                        </marker>
-                      </defs>
-                      <line
-                        x1={obj.x}
-                        y1={obj.y}
-                        x2={obj.x2}
-                        y2={obj.y2}
-                        stroke={obj.color}
-                        strokeWidth="3"
-                        markerEnd={obj.type === 'arrow' ? `url(#arrowhead-${obj.id})` : undefined}
-                      />
-                    </svg>
+                    <div key={obj.id} className="absolute" style={{ pointerEvents: 'none', inset: 0 }}>
+                      <svg
+                        className="absolute"
+                        style={{
+                          left: 0,
+                          top: 0,
+                          width: '100%',
+                          height: '100%',
+                          overflow: 'visible',
+                        }}
+                      >
+                        <defs>
+                          <marker
+                            id={`arrowhead-${obj.id}`}
+                            markerWidth="10"
+                            markerHeight="10"
+                            refX="9"
+                            refY="3"
+                            orient="auto"
+                          >
+                            <polygon points="0 0, 10 3, 0 6" fill={obj.color} />
+                          </marker>
+                        </defs>
+                        <line
+                          x1={obj.x || 0}
+                          y1={obj.y || 0}
+                          x2={obj.x2 || 0}
+                          y2={obj.y2 || 0}
+                          stroke={obj.color}
+                          strokeWidth="3"
+                          markerEnd={obj.type === 'arrow' ? `url(#arrowhead-${obj.id})` : undefined}
+                        />
+                      </svg>
+                    </div>
                   );
                 }
 
                 if (obj.type === 'pen' && obj.points) {
                   const pathData = obj.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
                   return (
-                    <svg
-                      key={obj.id}
-                      className="absolute pointer-events-none"
-                      style={{
-                        left: 0,
-                        top: 0,
-                        width: '100%',
-                        height: '100%',
-                        overflow: 'visible',
-                      }}
-                    >
-                      <path d={pathData} stroke={obj.color} strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+                    <div key={obj.id} className="absolute" style={{ pointerEvents: 'none', inset: 0 }}>
+                      <svg
+                        className="absolute"
+                        style={{
+                          left: 0,
+                          top: 0,
+                          width: '100%',
+                          height: '100%',
+                          overflow: 'visible',
+                        }}
+                      >
+                        <path d={pathData} stroke={obj.color} strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
                   );
                 }
 
@@ -935,15 +1024,25 @@ const Index = () => {
                       obj.text && obj.text
                     )}
                     {selectedObject === obj.id && (
-                      <button
-                        className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteSelected();
-                        }}
-                      >
-                        ×
-                      </button>
+                      <>
+                        <button
+                          className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSelected();
+                          }}
+                        >
+                          ×
+                        </button>
+                        {obj.type !== 'circle' && (
+                          <>
+                            <div className="absolute -top-1 -left-1 w-3 h-3 bg-primary rounded-full cursor-nw-resize" onMouseDown={(e) => handleObjectMouseDown(e, obj.id, 'nw')} />
+                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full cursor-ne-resize" onMouseDown={(e) => handleObjectMouseDown(e, obj.id, 'ne')} />
+                            <div className="absolute -bottom-1 -left-1 w-3 h-3 bg-primary rounded-full cursor-sw-resize" onMouseDown={(e) => handleObjectMouseDown(e, obj.id, 'sw')} />
+                            <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-primary rounded-full cursor-se-resize" onMouseDown={(e) => handleObjectMouseDown(e, obj.id, 'se')} />
+                          </>
+                        )}
+                      </>
                     )}
                   </div>
                 );
