@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import html2canvas from 'html2canvas';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -61,6 +62,7 @@ const Index = () => {
   const [currentColor, setCurrentColor] = useState('#8B5CF6');
   const [showGrid, setShowGrid] = useState(true);
   const [resizing, setResizing] = useState<{ id: string; corner: string; startX: number; startY: number; startWidth: number; startHeight: number } | null>(null);
+  const [copiedObject, setCopiedObject] = useState<CanvasObject | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const addToHistory = (newObjects: CanvasObject[]) => {
@@ -344,6 +346,56 @@ const Index = () => {
     toast({ title: `Template "${template.name}" loaded!` });
   };
 
+  const exportToPNG = async () => {
+    if (!canvasRef.current) return;
+    try {
+      const canvas = await html2canvas(canvasRef.current, {
+        backgroundColor: showGrid ? '#F8F9FA' : '#FFFFFF',
+        scale: 2,
+      });
+      const link = document.createElement('a');
+      link.download = `canvas-${Date.now()}.png`;
+      link.href = canvas.toDataURL();
+      link.click();
+      toast({ title: 'Canvas exported to PNG!' });
+    } catch (error) {
+      toast({ title: 'Export failed', variant: 'destructive' });
+    }
+  };
+
+  const copyObject = () => {
+    if (!selectedObject) return;
+    const obj = objects.find(o => o.id === selectedObject);
+    if (obj) {
+      setCopiedObject(obj);
+      toast({ title: 'Object copied' });
+    }
+  };
+
+  const pasteObject = () => {
+    if (!copiedObject) return;
+    const newObj = {
+      ...copiedObject,
+      id: Date.now().toString(),
+      x: copiedObject.x + 20,
+      y: copiedObject.y + 20,
+    };
+    const newObjects = [...objects, newObj];
+    setObjects(newObjects);
+    addToHistory(newObjects);
+    setSelectedObject(newObj.id);
+    toast({ title: 'Object pasted' });
+  };
+
+  const changeSelectedColor = (color: string) => {
+    if (!selectedObject) return;
+    const newObjects = objects.map(obj => 
+      obj.id === selectedObject ? { ...obj, color } : obj
+    );
+    setObjects(newObjects);
+    addToHistory(newObjects);
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem('canvas-templates');
     if (saved) {
@@ -368,13 +420,21 @@ const Index = () => {
         e.preventDefault();
         redo();
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObject) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObject && !editingText) {
         e.preventDefault();
         deleteSelected();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         saveProject();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedObject) {
+        e.preventDefault();
+        copyObject();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && copiedObject) {
+        e.preventDefault();
+        pasteObject();
       }
     };
 
@@ -385,7 +445,7 @@ const Index = () => {
       canvas?.removeEventListener('wheel', handleWheel);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [zoom, selectedObject, historyIndex, objects, currentProjectId]);
+  }, [zoom, selectedObject, historyIndex, objects, currentProjectId, editingText, copiedObject]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#F8F9FA]">
@@ -547,10 +607,39 @@ const Index = () => {
             <input 
               type="color" 
               value={currentColor} 
-              onChange={(e) => setCurrentColor(e.target.value)}
+              onChange={(e) => {
+                setCurrentColor(e.target.value);
+                if (selectedObject) {
+                  changeSelectedColor(e.target.value);
+                }
+              }}
               className="w-10 h-10 rounded cursor-pointer border-2 border-gray-200"
+              title={selectedObject ? 'Change selected object color' : 'Set color for new objects'}
             />
           </div>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-2">
+                <Icon name="Download" size={16} />
+                Export
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Export Canvas</SheetTitle>
+              </SheetHeader>
+              <div className="mt-6 space-y-3">
+                <Button onClick={exportToPNG} className="w-full gap-2">
+                  <Icon name="Image" size={16} />
+                  Export as PNG
+                </Button>
+                <p className="text-sm text-muted-foreground">
+                  Download your canvas as a high-quality PNG image
+                </p>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           <Sheet>
             <SheetTrigger asChild>
@@ -794,6 +883,14 @@ const Index = () => {
                       <span>Pan</span>
                       <code className="bg-muted px-2 py-1 rounded">Alt+Drag</code>
                     </div>
+                    <div className="flex justify-between">
+                      <span>Copy</span>
+                      <code className="bg-muted px-2 py-1 rounded">Ctrl+C</code>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Paste</span>
+                      <code className="bg-muted px-2 py-1 rounded">Ctrl+V</code>
+                    </div>
                   </div>
                 </div>
                 <Separator />
@@ -804,7 +901,8 @@ const Index = () => {
                     <p><strong>Click</strong> object to select it</p>
                     <p><strong>Drag</strong> selected object to move</p>
                     <p><strong>Resize:</strong> Drag corner handles on selected object</p>
-                    <p><strong>Color:</strong> Choose color in header before creating objects</p>
+                    <p><strong>Color:</strong> Select object and change color picker to update</p>
+                    <p><strong>Copy/Paste:</strong> Ctrl+C and Ctrl+V to duplicate objects</p>
                     <p><strong>Hover</strong> selected object to see delete button</p>
                   </div>
                 </div>
@@ -847,15 +945,35 @@ const Index = () => {
             >
               {objects.map((obj) => {
                 if (obj.type === 'line' || obj.type === 'arrow') {
+                  const x1 = obj.x || 0;
+                  const y1 = obj.y || 0;
+                  const x2 = obj.x2 || 0;
+                  const y2 = obj.y2 || 0;
+                  const minX = Math.min(x1, x2) - 20;
+                  const minY = Math.min(y1, y2) - 20;
+                  const width = Math.abs(x2 - x1) + 40;
+                  const height = Math.abs(y2 - y1) + 40;
+                  
                   return (
-                    <div key={obj.id} className="absolute" style={{ pointerEvents: 'none', inset: 0 }}>
+                    <div 
+                      key={obj.id} 
+                      className="absolute cursor-pointer group"
+                      style={{ 
+                        left: minX, 
+                        top: minY, 
+                        width, 
+                        height,
+                        pointerEvents: 'auto'
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedObject(obj.id);
+                      }}
+                    >
                       <svg
-                        className="absolute"
+                        width="100%"
+                        height="100%"
                         style={{
-                          left: 0,
-                          top: 0,
-                          width: '100%',
-                          height: '100%',
                           overflow: 'visible',
                         }}
                       >
@@ -872,35 +990,85 @@ const Index = () => {
                           </marker>
                         </defs>
                         <line
-                          x1={obj.x || 0}
-                          y1={obj.y || 0}
-                          x2={obj.x2 || 0}
-                          y2={obj.y2 || 0}
+                          x1={x1 - minX}
+                          y1={y1 - minY}
+                          x2={x2 - minX}
+                          y2={y2 - minY}
                           stroke={obj.color}
-                          strokeWidth="3"
+                          strokeWidth={selectedObject === obj.id ? '5' : '3'}
                           markerEnd={obj.type === 'arrow' ? `url(#arrowhead-${obj.id})` : undefined}
                         />
                       </svg>
+                      {selectedObject === obj.id && (
+                        <button
+                          className="absolute top-0 right-0 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSelected();
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                   );
                 }
 
-                if (obj.type === 'pen' && obj.points) {
-                  const pathData = obj.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+                if (obj.type === 'pen' && obj.points && obj.points.length > 0) {
+                  const xs = obj.points.map(p => p.x);
+                  const ys = obj.points.map(p => p.y);
+                  const minX = Math.min(...xs) - 10;
+                  const minY = Math.min(...ys) - 10;
+                  const maxX = Math.max(...xs) + 10;
+                  const maxY = Math.max(...ys) + 10;
+                  const width = maxX - minX;
+                  const height = maxY - minY;
+                  
+                  const pathData = obj.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x - minX} ${p.y - minY}`).join(' ');
+                  
                   return (
-                    <div key={obj.id} className="absolute" style={{ pointerEvents: 'none', inset: 0 }}>
+                    <div 
+                      key={obj.id} 
+                      className="absolute cursor-pointer group"
+                      style={{ 
+                        left: minX, 
+                        top: minY, 
+                        width, 
+                        height,
+                        pointerEvents: 'auto'
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedObject(obj.id);
+                      }}
+                    >
                       <svg
-                        className="absolute"
+                        width="100%"
+                        height="100%"
                         style={{
-                          left: 0,
-                          top: 0,
-                          width: '100%',
-                          height: '100%',
                           overflow: 'visible',
                         }}
                       >
-                        <path d={pathData} stroke={obj.color} strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        <path 
+                          d={pathData} 
+                          stroke={obj.color} 
+                          strokeWidth={selectedObject === obj.id ? '5' : '3'} 
+                          fill="none" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                        />
                       </svg>
+                      {selectedObject === obj.id && (
+                        <button
+                          className="absolute top-0 right-0 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSelected();
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                   );
                 }
