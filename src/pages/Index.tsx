@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -28,14 +29,29 @@ interface CanvasObject {
 
 const COLORS = ['#8B5CF6', '#0EA5E9', '#F97316', '#10B981', '#F59E0B', '#EC4899'];
 
+const API_URL = 'https://functions.poehali.dev/162b3525-6c8b-4235-b923-aa2e333cf260';
+
 const Index = () => {
+  const { toast } = useToast();
   const [tool, setTool] = useState<Tool>('select');
   const [objects, setObjects] = useState<CanvasObject[]>([]);
+  const [selectedObject, setSelectedObject] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [history, setHistory] = useState<CanvasObject[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  const addToHistory = (newObjects: CanvasObject[]) => {
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newObjects);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  };
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
@@ -63,8 +79,27 @@ const Index = () => {
       color: COLORS[Math.floor(Math.random() * COLORS.length)],
     };
 
-    setObjects([...objects, newObject]);
+    const newObjects = [...objects, newObject];
+    setObjects(newObjects);
+    addToHistory(newObjects);
     setTool('select');
+  };
+
+  const handleObjectMouseDown = (e: React.MouseEvent, objId: string) => {
+    if (tool !== 'select') return;
+    e.stopPropagation();
+    
+    setSelectedObject(objId);
+    const obj = objects.find(o => o.id === objId);
+    if (!obj) return;
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const offsetX = (e.clientX - rect.left - pan.x) / (zoom / 100) - obj.x;
+    const offsetY = (e.clientY - rect.top - pan.y) / (zoom / 100) - obj.y;
+    
+    setDragging({ id: objId, offsetX, offsetY });
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
@@ -73,15 +108,82 @@ const Index = () => {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,
       });
+      return;
+    }
+
+    if (dragging) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const x = (e.clientX - rect.left - pan.x) / (zoom / 100) - dragging.offsetX;
+      const y = (e.clientY - rect.top - pan.y) / (zoom / 100) - dragging.offsetY;
+
+      setObjects(objects.map(obj => 
+        obj.id === dragging.id ? { ...obj, x, y } : obj
+      ));
     }
   };
 
   const handleCanvasMouseUp = () => {
+    if (dragging) {
+      addToHistory(objects);
+      setDragging(null);
+    }
     setIsPanning(false);
   };
 
   const handleZoom = (delta: number) => {
     setZoom(Math.max(25, Math.min(200, zoom + delta)));
+  };
+
+  const deleteSelected = () => {
+    if (!selectedObject) return;
+    const newObjects = objects.filter(obj => obj.id !== selectedObject);
+    setObjects(newObjects);
+    addToHistory(newObjects);
+    setSelectedObject(null);
+    toast({ title: 'Object deleted' });
+  };
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(historyIndex - 1);
+      setObjects(history[historyIndex - 1]);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      setHistoryIndex(historyIndex + 1);
+      setObjects(history[historyIndex + 1]);
+    }
+  };
+
+  const saveProject = async () => {
+    try {
+      let projectId = currentProjectId;
+      
+      if (!projectId) {
+        const createRes = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'create_project', name: 'My Canvas Project' })
+        });
+        const data = await createRes.json();
+        projectId = data.project_id;
+        setCurrentProjectId(projectId);
+      }
+
+      await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save_objects', project_id: projectId, objects })
+      });
+      
+      toast({ title: 'Project saved successfully!' });
+    } catch (error) {
+      toast({ title: 'Failed to save project', variant: 'destructive' });
+    }
   };
 
   useEffect(() => {
@@ -92,10 +194,33 @@ const Index = () => {
       }
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObject) {
+        e.preventDefault();
+        deleteSelected();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+    };
+
     const canvas = canvasRef.current;
     canvas?.addEventListener('wheel', handleWheel, { passive: false });
-    return () => canvas?.removeEventListener('wheel', handleWheel);
-  }, [zoom]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      canvas?.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [zoom, selectedObject, historyIndex, objects, currentProjectId]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#F8F9FA]">
@@ -198,10 +323,30 @@ const Index = () => {
             </SheetContent>
           </Sheet>
 
-          <Button className="gap-2">
-            <Icon name="Share2" size={16} />
-            Share
+          <Button onClick={saveProject} className="gap-2">
+            <Icon name="Save" size={16} />
+            Save
           </Button>
+
+          <div className="flex gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={undo} disabled={historyIndex <= 0}>
+                  <Icon name="Undo" size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Undo (Ctrl+Z)</TooltipContent>
+            </Tooltip>
+            
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={redo} disabled={historyIndex >= history.length - 1}>
+                  <Icon name="Redo" size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Redo (Ctrl+Y)</TooltipContent>
+            </Tooltip>
+          </div>
 
           <Avatar className="cursor-pointer">
             <AvatarFallback className="bg-primary text-white">YP</AvatarFallback>
@@ -344,7 +489,8 @@ const Index = () => {
               {objects.map((obj) => (
                 <div
                   key={obj.id}
-                  className="absolute shadow-lg transition-transform hover:scale-105 cursor-pointer"
+                  className="absolute shadow-lg transition-all cursor-move group"
+                  onMouseDown={(e) => handleObjectMouseDown(e, obj.id)}
                   style={{
                     left: obj.x,
                     top: obj.y,
@@ -352,7 +498,9 @@ const Index = () => {
                     height: obj.height,
                     backgroundColor: obj.type === 'text' ? 'transparent' : obj.color,
                     borderRadius: obj.type === 'circle' ? '50%' : obj.type === 'sticky' ? '2px' : '4px',
-                    border: obj.type === 'text' ? 'none' : '2px solid rgba(255,255,255,0.3)',
+                    border: selectedObject === obj.id 
+                      ? '3px solid #8B5CF6' 
+                      : obj.type === 'text' ? 'none' : '2px solid rgba(255,255,255,0.3)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -363,6 +511,17 @@ const Index = () => {
                   }}
                 >
                   {obj.text && obj.text}
+                  {selectedObject === obj.id && (
+                    <button
+                      className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSelected();
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

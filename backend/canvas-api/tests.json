@@ -1,0 +1,29 @@
+{
+  "tests": [
+    {
+      "name": "Get all projects",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "projects": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Create new project",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "create_project",
+        "name": "Test Project",
+        "description": "Test Description"
+      },
+      "expectedStatus": 201,
+      "expectedBody": {
+        "project_id": "number"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
